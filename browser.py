@@ -7,44 +7,51 @@ class URL:
 
     def __init__(self, url):
         self.scheme = self.host = self.path = self.port = self.data_is_base64 = None   
+        self.data_mediatype = self.data_raw_content = None
+        self.data_is_base64 = False
+        
         self.scheme, url = url.split(":", 1)
-        assert self.scheme in [ "http" , "https", "file", "data"]
+        assert self.scheme in [ "http" , "https", "file", "data", "view-source"]
         
         if self.scheme == "data":
-            self.data_mediatype = self.data_raw_content = None
-            self.data_is_base64 = False
-
-            media_type_and_encoding, self.data_raw_content = url.split(",", 1)
-            if not media_type_and_encoding:
-                self.data_mediatype = self.DATA_SCHEME_DEFAULT_MIME
-            else:
-                if ";" in media_type_and_encoding:
-                    self.data_mediatype, base64_str = media_type_and_encoding.split(";", 1)
-
-                    if base64_str == "base64":
-                        self.data_is_base64 = True
-                else:
-                    self.data_mediatype = media_type_and_encoding
-                if not self.data_mediatype:
-                    self.data_mediatype = self.DATA_SCHEME_DEFAULT_MIME
+            self._scheme_data_init(url)
             
         elif self.scheme in [ "http" , "https", "file"]:
-            if self.scheme in  ["http" , "https"]:
-                url = url.lstrip("/")
+            self._scheme_http_https_file_init(url)
 
-            if "/" not in url:
-                url += '/'
+    def _scheme_data_init(self, url):
+        media_type_and_encoding, self.data_raw_content = url.split(",", 1)
+        if not media_type_and_encoding:
+            self.data_mediatype = self.DATA_SCHEME_DEFAULT_MIME
+        else:
+            if ";" in media_type_and_encoding:
+                self.data_mediatype, base64_str = media_type_and_encoding.split(";", 1)
 
-            self.host, url = url.split("/", 1)
-            self.path = "/" + url 
+                if base64_str == "base64":
+                    self.data_is_base64 = True
+            else:
+                self.data_mediatype = media_type_and_encoding
+            if not self.data_mediatype:
+                self.data_mediatype = self.DATA_SCHEME_DEFAULT_MIME
+    
+    def _scheme_http_https_file_init(self, url):
+        if self.scheme in  ["http" , "https"]:
+            url = url.lstrip("/")
 
-            if ":" in self.host:
-                self.host, port = self.host.split(":", 1)
-                self.port = int(port)
-            elif self.scheme == "http":
-                self.port = 80
-            elif self.scheme == "https":
-                self.port = 443
+        if "/" not in url:
+            url += '/'
+
+        self.host, url = url.split("/", 1)
+        self.path = "/" + url 
+
+        if ":" in self.host:
+            self.host, port = self.host.split(":", 1)
+            self.port = int(port)
+        elif self.scheme == "http":
+            self.port = 80
+        elif self.scheme == "https":
+            self.port = 443
+
      
     def set_headers(self, request, headers: dict):
         for key in headers:
