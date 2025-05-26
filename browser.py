@@ -159,13 +159,42 @@ class URL:
 
 def show(body):
     in_tag = False
+    entities = False
+    entity_str = ""
+
     for c in body:
         if c == "<":
             in_tag = True
         elif c == ">":
             in_tag = False
         elif not in_tag:
-            print(c, end="")
+            if c =="&":
+                entities = True
+            elif c ==";":
+                entities = False
+                entity_str += c
+            if entities:
+                entity_str += c
+                continue
+        
+            if entity_str == "&lt;":
+                entity_str=""
+                print("<", end="")
+            elif entity_str == "&gt;":
+                entity_str=""
+                print(">", end="")
+            elif entity_str == "&copy;":
+                entity_str=""
+                print("©", end="")
+            elif entity_str == "&amp;":
+                entity_str=""
+                print("&", end="")
+            elif entity_str == "&ndash;":
+                entity_str=""
+                print("-", end="")
+            elif not entities:
+                print(c, end="")
+            
 
 def load(url:URL):
     content = url.request()
