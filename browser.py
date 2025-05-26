@@ -9,15 +9,25 @@ class URL:
         self.scheme = self.host = self.path = self.port = self.data_is_base64 = None   
         self.data_mediatype = self.data_raw_content = None
         self.data_is_base64 = False
-        
+
+        # view-source:https://example.org/
         self.scheme, url = url.split(":", 1)
+
+        # self.scheme: view-source, url:https://example.org/
         assert self.scheme in [ "http" , "https", "file", "data", "view-source"]
         
         if self.scheme == "data":
             self._scheme_data_init(url)
             
         elif self.scheme in [ "http" , "https", "file"]:
-            self._scheme_http_https_file_init(url)
+            self._scheme_http_https_file_init(scheme=self.scheme, url=url)
+        
+        elif self.scheme == "view-source":
+            #url = https://example.org/
+            self._scheme_view_source_init(url)
+    
+    def get_scheme(self):
+        return self.scheme
 
     def _scheme_data_init(self, url):
         media_type_and_encoding, self.data_raw_content = url.split(",", 1)
@@ -34,8 +44,8 @@ class URL:
             if not self.data_mediatype:
                 self.data_mediatype = self.DATA_SCHEME_DEFAULT_MIME
     
-    def _scheme_http_https_file_init(self, url):
-        if self.scheme in  ["http" , "https"]:
+    def _scheme_http_https_file_init(self, scheme, url):
+        if scheme in  ["http" , "https"]:
             url = url.lstrip("/")
 
         if "/" not in url:
@@ -47,10 +57,19 @@ class URL:
         if ":" in self.host:
             self.host, port = self.host.split(":", 1)
             self.port = int(port)
-        elif self.scheme == "http":
+        elif scheme == "http":
             self.port = 80
-        elif self.scheme == "https":
+        elif scheme == "https":
             self.port = 443
+
+    def _scheme_view_source_init(self, url):
+        # self.scheme = view-source
+        # url = https://example.org/
+        local_scheme, url = url.split(":", 1)
+        # local_scheme = https &&  url = //example.org/
+        self.scheme += f":{local_scheme}"
+        #self.scheme = view-source:https
+        self._scheme_http_https_file_init(local_scheme, url)
 
      
     def set_headers(self, request, headers: dict):
@@ -93,26 +112,26 @@ class URL:
             return urllib.parse.unquote(self.data_raw_content)
 
 
-    def internet_request(self):
+    def internet_request(self, scheme, host, port, path):
         try:
             s = socket.socket(
                 family=socket.AF_INET,
                 type=socket.SOCK_STREAM,
                 proto=socket.IPPROTO_TCP
             )
-            s.connect((self.host, self.port))
+            s.connect((host, port))
             
             headers = {
-                "Host": self.host,
+                "Host": host,
                 "Connection": "close",
                 "User-Agent": self.USER_AGENT
             }
             
-            if self.scheme == "https":
+            if scheme == "https":
                 ctx  = ssl.create_default_context()
-                s = ctx.wrap_socket(s, server_hostname=self.host)
+                s = ctx.wrap_socket(s, server_hostname = host)
             
-            request = f"GET {self.path} HTTP/1.1\r\n"
+            request = f"GET {path} HTTP/1.1\r\n"
             request = self.set_headers(request=request, headers=headers)
             request += "\r\n"
 
@@ -137,13 +156,21 @@ class URL:
             print(f"Error sending internet request")
             return f"Error sending internet request: {e}" 
     
+    def view_source_request(self):
+        # right now self.scheme is view-souce:https
+        view_source_str, http_str = self.scheme.split(":", 1)
+        content = self.internet_request(http_str, self.host, self.port, self.path)
+        return content
+    
     def request(self):
         if self.scheme == "data":
             content = self.inline_data_retrieve() 
         elif self.scheme == "file":
             content = self.file_urls(self.path)
         elif self.scheme in ["http", "https"]:
-            content = self.internet_request()
+            content = self.internet_request(self.scheme, self.host, self.port, self.path)
+        elif "view-source" in self.scheme:
+            content = self.view_source_request()
         return content
     
     def to_string(self):
@@ -164,48 +191,55 @@ class URL:
         return url_str
 
 
-def show(body):
+def show(body, view_source):
     in_tag = False
     entities = False
     entity_str = ""
 
-    for c in body:
-        if c == "<":
-            in_tag = True
-        elif c == ">":
-            in_tag = False
-        elif not in_tag:
-            if c =="&":
-                entities = True
-            elif c ==";":
-                entities = False
-                entity_str += c
-            if entities:
-                entity_str += c
-                continue
-        
-            if entity_str == "&lt;":
-                entity_str=""
-                print("<", end="")
-            elif entity_str == "&gt;":
-                entity_str=""
-                print(">", end="")
-            elif entity_str == "&copy;":
-                entity_str=""
-                print("©", end="")
-            elif entity_str == "&amp;":
-                entity_str=""
-                print("&", end="")
-            elif entity_str == "&ndash;":
-                entity_str=""
-                print("-", end="")
-            elif not entities:
-                print(c, end="")
+    if view_source:
+        print(body)
+    else:
+        for c in body:
+            if c == "<":
+                in_tag = True
+            elif c == ">":
+                in_tag = False
+            elif not in_tag:
+                if c =="&":
+                    entities = True
+                elif c ==";":
+                    entities = False
+                    entity_str += c
+                if entities:
+                    entity_str += c
+                    continue
+            
+                if entity_str == "&lt;":
+                    entity_str=""
+                    print("<", end="")
+                elif entity_str == "&gt;":
+                    entity_str=""
+                    print(">", end="")
+                elif entity_str == "&copy;":
+                    entity_str=""
+                    print("©", end="")
+                elif entity_str == "&amp;":
+                    entity_str=""
+                    print("&", end="")
+                elif entity_str == "&ndash;":
+                    entity_str=""
+                    print("-", end="")
+                elif not entities:
+                    print(c, end="")
             
 
 def load(url:URL):
+    view_source = False
+    scheme = url.get_scheme()
+    if "view-source" in scheme:
+        view_source = True
     content = url.request()
-    show(content)
+    show(content, view_source)
 
 
 if __name__ == "__main__":
