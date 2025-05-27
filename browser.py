@@ -6,14 +6,13 @@ class URL:
     DATA_SCHEME_DEFAULT_MIME = "text/plain;charset=US-ASCII"
 
     def __init__(self, url):
+        self.socket = None
         self.scheme = self.host = self.path = self.port = self.data_is_base64 = None   
         self.data_mediatype = self.data_raw_content = None
         self.data_is_base64 = False
 
-        # view-source:https://example.org/
         self.scheme, url = url.split(":", 1)
 
-        # self.scheme: view-source, url:https://example.org/
         assert self.scheme in [ "http" , "https", "file", "data", "view-source"]
         
         if self.scheme == "data":
@@ -23,11 +22,8 @@ class URL:
             self._scheme_http_https_file_init(scheme=self.scheme, url=url)
         
         elif self.scheme == "view-source":
-            #url = https://example.org/
             self._scheme_view_source_init(url)
     
-    def get_scheme(self):
-        return self.scheme
 
     def _scheme_data_init(self, url):
         media_type_and_encoding, self.data_raw_content = url.split(",", 1)
@@ -63,14 +59,9 @@ class URL:
             self.port = 443
 
     def _scheme_view_source_init(self, url):
-        # self.scheme = view-source
-        # url = https://example.org/
         local_scheme, url = url.split(":", 1)
-        # local_scheme = https &&  url = //example.org/
         self.scheme += f":{local_scheme}"
-        #self.scheme = view-source:https
         self._scheme_http_https_file_init(local_scheme, url)
-
      
     def set_headers(self, request, headers: dict):
         for key in headers:
@@ -114,22 +105,27 @@ class URL:
 
     def internet_request(self, scheme, host, port, path):
         try:
-            s = socket.socket(
-                family=socket.AF_INET,
-                type=socket.SOCK_STREAM,
-                proto=socket.IPPROTO_TCP
-            )
-            s.connect((host, port))
-            
+            if self.socket:
+                s = self.socket
+            else:
+                s = socket.socket(
+                    family=socket.AF_INET,
+                    type=socket.SOCK_STREAM,
+                     proto=socket.IPPROTO_TCP
+                )
+                s.connect((host, port))
+
+                if scheme == "https":
+                    ctx  = ssl.create_default_context()
+                    s = ctx.wrap_socket(s, server_hostname = host)
+
+                self.socket = s
+                
             headers = {
                 "Host": host,
-                "Connection": "close",
+                "Connection": "keep-alive",
                 "User-Agent": self.USER_AGENT
             }
-            
-            if scheme == "https":
-                ctx  = ssl.create_default_context()
-                s = ctx.wrap_socket(s, server_hostname = host)
             
             request = f"GET {path} HTTP/1.1\r\n"
             request = self.set_headers(request=request, headers=headers)
@@ -137,27 +133,34 @@ class URL:
 
             s.send(request.encode("utf8"))
 
-            response = s.makefile("r", encoding="utf8", newline="\r\n")
-            statusline = response.readline()
-            version, status, explanation = statusline.split(" ", 2)
+            response = s.makefile("rb", encoding="utf8", newline="\r\n")
+            print(f"typeof response", type(response))
+
+            statusline = response.readline().decode("utf-8")
+            print(f"typeof statusline", type(statusline))
+            http_protocol_version, status, explanation = statusline.split(" ", 2)
             response_headers = {}
+
             while True:
-                line = response.readline()
+                line = response.readline().decode("utf-8")
                 if line == "\r\n": break
                 header, value  = line.split(":", 1)
                 response_headers[header.casefold()] = value.strip()
-        
+
+            response_content_length = response_headers["content-length"] if response_headers and response_headers["content-length"] else ""
+
             assert "transfer-encoding" not in response_headers
             assert "content-encoding" not in response_headers
-            content = response.read()
-            s.close()
-            return content
+
+            content = response.read(int(response_content_length)).decode("utf-8")
+            #s.close()
+
+            return status, response_headers, content
         except Exception as e:
             print(f"Error sending internet request")
             return f"Error sending internet request: {e}" 
     
     def view_source_request(self):
-        # right now self.scheme is view-souce:https
         view_source_str, http_str = self.scheme.split(":", 1)
         content = self.internet_request(http_str, self.host, self.port, self.path)
         return content
@@ -168,7 +171,9 @@ class URL:
         elif self.scheme == "file":
             content = self.file_urls(self.path)
         elif self.scheme in ["http", "https"]:
-            content = self.internet_request(self.scheme, self.host, self.port, self.path)
+            status, response_headers, content = self.internet_request(self.scheme, self.host, self.port, self.path)
+            if(int(status) >= 300 and int(status) <=300):
+                handle_redirect(status, response_headers)
         elif "view-source" in self.scheme:
             content = self.view_source_request()
         return content
@@ -190,6 +195,24 @@ class URL:
 
         return url_str
 
+    def get_scheme(self):
+        return self.scheme
+    
+    def get_host(self):
+        return self.host
+    
+    def get_path(self):
+        return self.path
+    
+    def get_port(self):
+        return self.port
+
+def handle_redirect(status, response_headers):
+    MAX_RETRIES = 1
+    location = response_headers["location"]
+    while MAX_RETRIES > 0:
+        pass
+    pass
 
 def show(body, view_source):
     in_tag = False
@@ -232,7 +255,6 @@ def show(body, view_source):
                 elif not entities:
                     print(c, end="")
             
-
 def load(url:URL):
     view_source = False
     scheme = url.get_scheme()
