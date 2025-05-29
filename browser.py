@@ -4,6 +4,7 @@ import urllib.parse
 class URL:
     USER_AGENT = "Mozilla/5.0 (iPad; CPU iPad OS 9_5_0 like Mac OS X) AppleWebKit/600.39 (KHTML, like Gecko)  Chrome/52.0.3769.344 Mobile Safari/603.9"
     DATA_SCHEME_DEFAULT_MIME = "text/plain;charset=US-ASCII"
+    MAX_RETRIES = 10
 
     def __init__(self, url):
         self.socket = None
@@ -103,7 +104,7 @@ class URL:
             return urllib.parse.unquote(self.data_raw_content)
 
 
-    def internet_request(self, scheme, host, port, path):
+    def _internet_request(self, scheme, host, port, path):
         try:
             if self.socket:
                 s = self.socket
@@ -147,33 +148,57 @@ class URL:
                 header, value  = line.split(":", 1)
                 response_headers[header.casefold()] = value.strip()
 
-            response_content_length = response_headers["content-length"] if response_headers and response_headers["content-length"] else ""
+            response_content_length = response_headers.get("content-length", "")
 
             assert "transfer-encoding" not in response_headers
             assert "content-encoding" not in response_headers
 
             content = response.read(int(response_content_length)).decode("utf-8")
-            #s.close()
-
             return status, response_headers, content
+        
         except Exception as e:
             print(f"Error sending internet request")
+            s.close()
             return f"Error sending internet request: {e}" 
     
+
     def view_source_request(self):
         view_source_str, http_str = self.scheme.split(":", 1)
-        content = self.internet_request(http_str, self.host, self.port, self.path)
+        content = self._internet_request(http_str, self.host, self.port, self.path)
         return content
-    
+
+
+    def _handle_redirects(self, url):
+        pass
+
     def request(self):
         if self.scheme == "data":
             content = self.inline_data_retrieve() 
         elif self.scheme == "file":
             content = self.file_urls(self.path)
         elif self.scheme in ["http", "https"]:
-            status, response_headers, content = self.internet_request(self.scheme, self.host, self.port, self.path)
-            if(int(status) >= 300 and int(status) <=300):
-                handle_redirect(status, response_headers)
+
+            current_redirects = 0
+            while True:
+                status, response_headers, content = self._internet_request(self.scheme, self.host, self.port, self.path)
+                if (int(status) >= 300 and int(status) < 400 )and ("location" in response_headers):
+                    if current_redirects == self.MAX_RETRIES:
+                        raise RuntimeError("too many redirects")
+                    else:
+                        current_redirects += 1
+                        next_url = response_headers.get("location")
+
+                        if next_url.startswith("http://") or next_url.startswith("https://"):
+                            self.__init__(next_url)
+                        elif next_url.startswith("/"):
+                            self.path = next_url
+                            
+
+                else:
+                    break
+            return content
+        
+            # content = self._handle_redirects(url)
         elif "view-source" in self.scheme:
             content = self.view_source_request()
         return content
@@ -206,13 +231,6 @@ class URL:
     
     def get_port(self):
         return self.port
-
-def handle_redirect(status, response_headers):
-    MAX_RETRIES = 1
-    location = response_headers["location"]
-    while MAX_RETRIES > 0:
-        pass
-    pass
 
 def show(body, view_source):
     in_tag = False
